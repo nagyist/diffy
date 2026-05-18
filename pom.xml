@@ -11,7 +11,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.5</version>
+        <version>3.3.13</version>
     </parent>
 
     <repositories>
@@ -44,7 +44,6 @@
         <frontend-maven-plugin.version>1.15.0</frontend-maven-plugin.version>
         <node.version>v22.11.0</node.version>
         <yarn.version>v1.22.22</yarn.version>
-        <logback.version>1.5.13</logback.version>
     </properties>
 
     <dependencies>
