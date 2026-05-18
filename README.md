@@ -4,24 +4,18 @@
 [![Downloads](https://img.shields.io/github/downloads/opendiffy/diffy/total.svg)](https://github.com/opendiffy/diffy/releases/latest)
 [![License: CC](https://img.shields.io/badge/License-CC%20BY%20NC%20ND-blue.svg)](https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode)
 
-[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_13.yml/badge.svg
-)](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_13.yml)
-[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_12.yml/badge.svg
-)](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_12.yml)
-[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_latest.yml/badge.svg
-)](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_latest.yml)
+[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_latest.yml/badge.svg)](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_latest.yml)
+[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_15.yml/badge.svg)](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_15.yml)
+[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_14.yml/badge.svg)](https://github.com/opendiffy/diffy/actions/workflows/maven_macos_14.yml)
 
-[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_latest.yml/badge.svg
-)](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_latest.yml)
-[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2022.yml/badge.svg
-)](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2022.yml)
-[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2019.yml/badge.svg
-)](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2019.yml)
+[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_latest.yml/badge.svg)](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_latest.yml)
+[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2025.yml/badge.svg)](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2025.yml)
+[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2022.yml/badge.svg)](https://github.com/opendiffy/diffy/actions/workflows/maven_windows_2022.yml)
 
-[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_ubuntu_latest.yml/badge.svg
-)](https://github.com/opendiffy/diffy/actions/workflows/maven_ubuntu_latest.yml)
+[![Build status](https://github.com/opendiffy/diffy/actions/workflows/maven_ubuntu_latest.yml/badge.svg)](https://github.com/opendiffy/diffy/actions/workflows/maven_ubuntu_latest.yml)
 
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/diffy)
+
 ## Status
 
 Diffy is used in production at:
@@ -46,35 +40,58 @@ Feel free to contact us via [discord](https://discord.gg/QEJRxgVfD8), [linkedin]
 
 ## What is Diffy?
 
-Diffy finds potential bugs in your service using running instances of your new code and your old
-code side by side. Diffy behaves as a proxy and multicasts whatever requests it receives to each of
-the running instances. It then compares the responses, and reports any regressions that may surface
-from those comparisons. The premise for Diffy is that if two implementations of the service return
-“similar” responses for a sufficiently large and diverse set of requests, then the two
-implementations can be treated as equivalent and the newer implementation is regression-free.
+Diffy finds regressions in your service by running your new code and your old
+code side by side and comparing what they return. It behaves as a proxy that
+multicasts every request it receives to each running instance, compares the
+responses, and renders a verdict — **Safe to ship** when the candidate matches
+the primary within noise tolerance, or **Regressions detected** when real
+differences surface.
+
+The premise is simple: if two implementations of a service return “similar”
+responses for a sufficiently large and diverse set of requests, the newer
+implementation can be treated as regression-free.
 
 ## How does Diffy work?
 
-Diffy acts as a proxy that accepts requests drawn from any source that you provide and multicasts
-each of those requests to three different service instances:
+Diffy acts as a proxy that accepts requests drawn from any source you provide
+and multicasts each of those requests to three different service instances:
 
-1. A candidate instance running your new code
-2. A primary instance running your last known-good code
-3. A secondary instance running the same known-good code as the primary instance
+1. A **candidate** instance running your new code
+2. A **primary** instance running your last known-good code
+3. A **secondary** instance running the same known-good code as the primary
 
-As Diffy receives a request, it is multicast and sent to your candidate, primary, and secondary
-instances. When those services send responses back, Diffy compares those responses and looks for two
-things:
+When those services respond, Diffy compares the responses and looks for two things:
 
-1. Raw differences observed between the candidate and primary instances.
-2. Non-deterministic noise observed between the primary and secondary instances. Since both of these
-   instances are running known-good code, you should expect responses to be in agreement. If not,
-   your service may have non-deterministic behavior, which is to be expected.
+1. **Real differences** observed between the candidate and the primary.
+2. **Non-deterministic noise** observed between the primary and the secondary.
+   Since both run known-good code, you should expect them to agree. Where they
+   don’t, your service is exhibiting non-deterministic behavior — Diffy treats
+   that signal as noise.
+
 ![Diffy Topology](/images/diffy_topology.png)
 
-Diffy measures how often primary and secondary disagree with each other vs. how often primary and
-candidate disagree with each other. If these measurements are roughly the same, then Diffy
-determines that there is nothing wrong and that the error can be ignored.
+Diffy measures how often primary and secondary disagree with each other vs.
+how often primary and candidate disagree. If those rates are comparable,
+Diffy concludes the candidate has no real regression and the difference is
+just noise — which is what the **signal-to-noise** indicator in the UI
+summarizes at a glance.
+
+## The Diffy UI
+
+Diffy ships with a single-page UI organized around five views:
+
+* **Overview** — the run verdict (*Safe to ship* / *Regressions detected*),
+  signal-to-noise, traffic and diff timeseries, and the top failing endpoints.
+* **Endpoints** — drill into any endpoint, walk the field tree, and open
+  side-by-side or three-way diffs in the inspector.
+* **Noise** — review which fields are flagged as noise and tune cancellation
+  rules per endpoint.
+* **Transformations** — define request/response transformations applied
+  before comparison.
+* **Runs** — browse the history of past comparison runs and switch between
+  them.
+
+![Diffy UI](/images/diffy-ui.png)
 
 ## Documentation
 
