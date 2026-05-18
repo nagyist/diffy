@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3.9"
 
 services:
   mongodb:
@@ -10,49 +10,97 @@ services:
     ports:
       - 27017:27017
     healthcheck:
-      test: echo 'db.stats().ok' | mongo localhost:27017/test --quiet
+      test: echo 'db.stats().ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 10s
       retries: 10
     restart: unless-stopped
 
   loki:
-    image: grafana/loki:2.2.0
+    image: grafana/loki:3.0.0
     command: -config.file=/etc/loki/loki-local.yaml
     user: "0"
     ports:
-      - "3101:3100"                                   # loki needs to be exposed so it receives logs
-    environment:
-      - JAEGER_AGENT_HOST=tempo
-      - JAEGER_ENDPOINT=http://tempo:14268/api/traces # send traces to Tempo
-      - JAEGER_SAMPLER_TYPE=const
-      - JAEGER_SAMPLER_PARAM=1
+      - "3101:3100"
     volumes:
       - ./etc/loki-local.yaml:/etc/loki/loki-local.yaml
       - ./data/loki-data:/tmp/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   tempo:
-    image: grafana/tempo:0.7.0
+    image: grafana/tempo:2.4.0
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
       - ./etc/tempo-local.yaml:/etc/tempo.yaml
       - ./data/tempo-data:/tmp/tempo
     restart: unless-stopped
     ports:
-      - "14268:14268"  # jaeger ingest, Jaeger - Thrift HTTP
-      - "14250:14250"  # Jaeger - GRPC
-      - "55680:55680"  # OpenTelemetry
-      - "3102:3100"   # tempo
+      - "3102:3100"   # tempo HTTP API
+      - "4317:4317"   # OTLP gRPC
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
 
-  tempo-query:
-    image: grafana/tempo-query:0.7.0
-    command: ["--grpc-storage-plugin.configuration-file=/etc/tempo-query.yaml"]
+  # ── LLM inference ────────────────────────────────────────────────────────────
+  # Downloads Qwen2.5-1.5B-Instruct Q4_K_M (~1 GB) once into a named volume.
+  # Subsequent starts skip the download entirely.
+  model-init:
+    profiles: ["llm-bundled"]
+    image: alpine:3.19
     volumes:
-      - ./etc/tempo-query.yaml:/etc/tempo-query.yaml
+      - llm-models:/models
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        apk add --no-cache curl -q
+        if [ ! -f /models/qwen2.5-1.5b-instruct-q4_k_m.gguf ]; then
+          echo '==> Downloading Qwen2.5-1.5B-Instruct Q4_K_M (~1 GB) — first run only...'
+          curl -L --retry 5 --retry-delay 3 --progress-bar \
+            -o /models/qwen2.5-1.5b-instruct-q4_k_m.gguf \
+            'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf'
+          echo '==> Download complete.'
+        else
+          echo '==> Model already present, skipping download.'
+        fi
+    restart: "no"
+
+  llama-server:
+    profiles: ["llm-bundled"]
+    image: ghcr.io/ggerganov/llama.cpp:server
+    volumes:
+      - llm-models:/models
+    command:
+      - "-m"
+      - "/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--ctx-size"
+      - "2048"
+      - "--alias"
+      - "qwen2.5"
+      - "-ngl"
+      - "0"        # CPU-only; set to 99 if the host has a GPU
     ports:
-      - "16686:16686"  # jaeger-ui
+      - "8082:8080"   # exposed for local debugging; diffy uses internal hostname
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health 2>/dev/null | grep -q ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     depends_on:
-      - tempo
+      model-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  # ─────────────────────────────────────────────────────────────────────────────
 
   primary:
     image: diffy/example-service:production
@@ -87,9 +135,8 @@ services:
       rootUrl: "localhost:8888"
       otel.javaagent.debug: "false"
       otel.metrics.exporter: "none"
-      otel.traces.exporter: "jaeger"
-      otel.exporter.jaeger.endpoint: "http://tempo:14250"
-      otel.exporter.jaeger.traces.endpoint: "http://tempo:14250"
+      otel.traces.exporter: "otlp"
+      otel.exporter.otlp.endpoint: "http://tempo:4317"
       otel.resource.attributes: "service.name=diffy"
       spring.application.name: "diffy"
       logging.level.web: "INFO"
@@ -99,8 +146,10 @@ services:
       logging.file.max-size: "10MB"
       logging.file.max-history: 1
       logging.file.clean-history-on-start: "true"
-      spring.mongodb.embedded.version: "4.4.13"
       dockerComposeLocal: "true"
+      llm.provider: "${LLM_PROVIDER:-ollama}"
+      llm.ollama.url: "${LLM_URL:-http://llama-server:8080}"
+      llm.ollama.model: "${LLM_MODEL:-qwen2.5}"
     volumes:
       - ./data/logs:/app/logs
     depends_on:
@@ -111,7 +160,7 @@ services:
       - candidate
 
   promtail:
-    image: grafana/promtail:2.2.0
+    image: grafana/promtail:2.9.8
     command: -config.file=/etc/promtail/promtail-local.yaml
     volumes:
       - ./etc/promtail-local.yaml:/etc/promtail/promtail-local.yaml
@@ -133,7 +182,7 @@ services:
       - diffy
 
   grafana:
-    image: grafana/grafana:7.4.0-ubuntu
+    image: grafana/grafana:11.2.0
     volumes:
       - ./data/grafana-data/datasources:/etc/grafana/provisioning/datasources
       - ./data/grafana-data/dashboards-provisioning:/etc/grafana/provisioning/dashboards
@@ -146,5 +195,8 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
-      - tempo-query
+      - tempo
       - loki
+
+volumes:
+  llm-models:   # persists the model across restarts; ~1 GB, downloaded once

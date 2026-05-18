@@ -16,10 +16,27 @@ service:
 
 serviceName : "Default Sample Service"
 
+llm:
+  # "ollama" (default, local CPU-friendly) or "anthropic"
+  provider: ollama
+  ollama:
+    url: ${OLLAMA_URL:http://localhost:11434}
+    model: ${OLLAMA_MODEL:phi3:mini}
+
+anthropic:
+  api-key: ${ANTHROPIC_API_KEY:}
+  model: ${ANTHROPIC_MODEL:claude-opus-4-7}
+
 spring:
   mongodb:
     embedded:
       version: "5.0.6"
+
+de:
+  flapdoodle:
+    mongodb:
+      embedded:
+        version: "5.0.6"
 management:
   endpoints:
     web:
