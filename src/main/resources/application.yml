@@ -30,13 +30,13 @@ anthropic:
 spring:
   mongodb:
     embedded:
-      version: "5.0.6"
+      version: "7.0.14"
 
 de:
   flapdoodle:
     mongodb:
       embedded:
-        version: "5.0.6"
+        version: "7.0.14"
 management:
   endpoints:
     web:
